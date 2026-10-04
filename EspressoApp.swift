@@ -1,12 +1,40 @@
 import SwiftUI
 import AppKit
 
+// MARK: - 界面语言(默认英文,选择持久化到 UserDefaults)
+
+enum UILang: String, CaseIterable, Identifiable {
+    case en, zh
+    var id: String { rawValue }
+
+    var statusOn: String  { self == .zh ? "防休眠已开启" : "No-Sleep ON" }
+    var statusOff: String { self == .zh ? "正常睡眠模式" : "Normal Sleep" }
+    var descOn: String    { self == .zh ? "Mac 将保持唤醒,合盖也不睡"
+                                        : "Mac stays awake — even with the lid closed" }
+    var descOff: String   { self == .zh ? "Mac 会按系统设置正常休眠"
+                                        : "Mac sleeps according to system settings" }
+    var quit: String      { self == .zh ? "退出" : "Quit" }
+    func toggleFailed(_ detail: String) -> String {
+        self == .zh
+            ? "切换失败:\(detail)\n可能还没配置 sudoers 免密规则,请运行 install.sh"
+            : "Toggle failed: \(detail)\nThe sudoers rule may not be installed — run install.sh."
+    }
+}
+
 // MARK: - 状态模型:读写 pmset disablesleep
 
 final class SleepModel: ObservableObject {
     @Published var sleepDisabled = false   // true = no-sleep(防休眠开启)
     @Published var busy = false
     @Published var lastError: String?
+    @Published var uiLang: UILang {
+        didSet { UserDefaults.standard.set(uiLang.rawValue, forKey: "uiLang") }
+    }
+
+    init() {
+        let saved = UserDefaults.standard.string(forKey: "uiLang")
+        uiLang = saved.flatMap(UILang.init(rawValue:)) ?? .en
+    }
 
     func refresh() {
         DispatchQueue.global(qos: .userInitiated).async {
@@ -32,7 +60,7 @@ final class SleepModel: ObservableObject {
                     self.lastError = nil
                     self.sleepDisabled = (target == "1")
                 } else {
-                    self.lastError = "切换失败:\(out)\n可能还没配置 sudoers 免密规则。"
+                    self.lastError = self.uiLang.toggleFailed(out)
                 }
                 self.refresh()
             }
@@ -70,9 +98,19 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            Text("Espresso")
-                .font(.headline)
-                .foregroundColor(.secondary)
+            HStack {
+                Text("Espresso")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Picker(selection: $model.uiLang, label: EmptyView()) {
+                    Text("EN").tag(UILang.en)
+                    Text("中文").tag(UILang.zh)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 96)
+                .labelsHidden()
+            }
 
             Button(action: model.toggle) {
                 ZStack {
@@ -90,9 +128,9 @@ struct ContentView: View {
             .disabled(model.busy)
             .opacity(model.busy ? 0.6 : 1)
 
-            Text(model.sleepDisabled ? "防休眠已开启" : "正常睡眠模式")
+            Text(model.sleepDisabled ? model.uiLang.statusOn : model.uiLang.statusOff)
                 .font(.title3).bold()
-            Text(model.sleepDisabled ? "Mac 将保持唤醒,合盖也不睡" : "Mac 会按系统设置正常休眠")
+            Text(model.sleepDisabled ? model.uiLang.descOn : model.uiLang.descOff)
                 .font(.caption)
                 .foregroundColor(.secondary)
 
@@ -110,7 +148,7 @@ struct ContentView: View {
                     .font(.caption2)
                     .foregroundColor(.secondary)
                 Spacer()
-                Button("退出") { NSApplication.shared.terminate(nil) }
+                Button(model.uiLang.quit) { NSApplication.shared.terminate(nil) }
                     .font(.caption)
                     .buttonStyle(.borderless)
             }

@@ -52,6 +52,8 @@ espresso status   # 查看状态;开启时退出码 0,关闭时 1,方便脚本�
 espresso status || espresso on   # 确保防休眠开着
 ```
 
+**界面语言**:app 默认英文,点弹层右上角的 EN/中文 可切换,选择会被记住;CLI 输出跟随同一设置。
+
 ### 卸载
 
 ```bash
@@ -133,6 +135,8 @@ The `status` exit code enables patterns like:
 ```bash
 espresso status || espresso on   # make sure no-sleep is on
 ```
+
+**Language**: the app defaults to English; switch to Chinese with the EN/中文 control at the top right of the panel (persisted). CLI output follows the same setting.
 
 ### Uninstall
 

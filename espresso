@@ -58,6 +58,18 @@ fmt_clock() {
     else date -r "$1" '+%a %H:%M'; fi
 }
 
+# 从 `pmset -g batt` 的输出(stdin)取当前供电:AC / Battery / Unknown
+parse_power_source() {
+    local first
+    IFS= read -r first || true
+    case "$first" in
+        *"'AC Power'"*)      echo AC ;;
+        *"'Battery Power'"*) echo Battery ;;
+        *)                   echo Unknown ;;
+    esac
+}
+power_source() { $PMSET -g batt 2>/dev/null | parse_power_source; }
+
 # 读截止时间;没有 / 内容非法则返回 1
 read_deadline() {
     local d
@@ -110,7 +122,7 @@ usage() {
   for <时长> 定时防休眠,到点自动恢复睡眠;如 for 90m / for 2h / for 1h30m(最长 7 天)
   off        恢复正常睡眠(同时取消定时)
   toggle     切换开关
-  status     查看状态、剩余时间;开启时退出码 0,关闭时退出码 1(方便脚本判断)
+  status     查看状态、剩余时间、供电;开启时退出码 0,关闭时退出码 1(方便脚本判断)
 EOF
     else
         cat <<'EOF'
@@ -121,7 +133,7 @@ Usage: espresso <command>
                  e.g. for 90m / for 2h / for 1h30m (max 7 days)
   off            restore normal sleep (cancels any timer)
   toggle         flip the switch
-  status         show state and time left;
+  status         show state, time left, power source;
                  exit code 0 = on, 1 = off (script-friendly)
 EOF
     fi
@@ -191,7 +203,8 @@ do_tick() {
 }
 
 do_status() {
-    local deadline now left
+    local deadline now left src
+    src="$(power_source)"
     if is_on; then
         msg "on  (SleepDisabled=1, no-sleep active)" \
             "on  (SleepDisabled=1,防休眠中)"
@@ -208,9 +221,15 @@ do_status() {
         else
             msg "timer: none (until turned off)" "定时:无(直到手动关闭)"
         fi
+        msg "power: $src" "供电:$src"
+        if [ "$src" = Battery ]; then
+            msg "WARNING: no-sleep is active on battery power — the Mac will keep running and may drain the battery." \
+                "警告:正在用电池供电且防休眠开启 —— Mac 会持续运行,可能耗尽电量"
+        fi
     else
         msg "off (SleepDisabled=0, normal sleep)" \
             "off (SleepDisabled=0,正常睡眠)"
+        msg "power: $src" "供电:$src"
         return 1
     fi
 }

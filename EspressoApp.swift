@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import IOKit.ps
 
 // MARK: - 界面语言(默认英文,选择持久化到 UserDefaults)
 
@@ -16,6 +17,11 @@ enum UILang: String, CaseIterable, Identifiable {
     var quit: String      { self == .zh ? "退出" : "Quit" }
     var duration: String  { self == .zh ? "时长" : "Duration" }
     var untilOff: String  { self == .zh ? "直到手动关闭" : "Until turned off" }
+    var battery: String   { self == .zh ? "电池" : "Battery" }
+    var batteryWarning: String {
+        self == .zh ? "正在使用电池:防休眠会继续保持,可能耗尽电量"
+                    : "On battery — no-sleep stays on and may drain the battery"
+    }
     func hours(_ h: Int) -> String { self == .zh ? "\(h) 小时" : (h == 1 ? "1 hour" : "\(h) hours") }
     // 时间跟随 app 界面语言,而不是系统区域(否则英文界面里会出现「上午12:30」)
     func clock(_ date: Date) -> String {
@@ -39,6 +45,7 @@ final class SleepModel: ObservableObject {
 
     @Published var sleepDisabled = false   // true = no-sleep(防休眠开启)
     @Published var deadline: Date?         // 定时模式的自动关闭时间
+    @Published var onBattery = false
     @Published var busy = false
     @Published var lastError: String?
     @Published var uiLang: UILang {
@@ -59,11 +66,28 @@ final class SleepModel: ObservableObject {
         uiLang = saved.flatMap(UILang.init(rawValue:)) ?? .en
         let mins = UserDefaults.standard.integer(forKey: "durationMinutes")
         durationMinutes = Self.durations.contains(mins) ? mins : 0
+        onBattery = Self.isOnBattery()
+        // 供电变化(拔/插电源)时系统回调,立即刷新警告
+        let ctx = Unmanaged.passUnretained(self).toOpaque()
+        if let src = IOPSNotificationCreateRunLoopSource({ ctx in
+            guard let ctx else { return }
+            let model = Unmanaged<SleepModel>.fromOpaque(ctx).takeUnretainedValue()
+            model.onBattery = SleepModel.isOnBattery()
+        }, ctx)?.takeRetainedValue() {
+            CFRunLoopAddSource(CFRunLoopGetMain(), src, .defaultMode)
+        }
         // CLI / 定时到点等外部变化:低频轮询,保证菜单栏图标不过期
         pollTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             self?.refresh()
         }
         refresh()
+    }
+
+    static func isOnBattery() -> Bool {
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let type = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue()
+        else { return false }
+        return (type as String) == kIOPSBatteryPowerValue
     }
 
     func refresh() {
@@ -78,6 +102,7 @@ final class SleepModel: ObservableObject {
             DispatchQueue.main.async {
                 self.sleepDisabled = disabled
                 self.deadline = disabled ? deadline : nil
+                self.onBattery = Self.isOnBattery()
             }
         }
     }
@@ -195,6 +220,16 @@ struct ContentView: View {
             .font(.caption)
             .disabled(model.busy)
 
+            if model.sleepDisabled && model.onBattery {
+                Label(model.uiLang.batteryWarning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.12)))
+            }
+
             if let err = model.lastError {
                 Text(err)
                     .font(.caption2)
@@ -205,7 +240,7 @@ struct ContentView: View {
 
             Divider()
             HStack {
-                Text("SleepDisabled = \(model.sleepDisabled ? 1 : 0)")
+                Text("SleepDisabled = \(model.sleepDisabled ? 1 : 0)\(model.onBattery ? " · \(model.uiLang.battery)" : "")")
                     .font(.caption2)
                     .foregroundColor(.secondary)
                 Spacer()

@@ -1,5 +1,5 @@
 #!/bin/bash
-# espresso CLI 的轻量测试:时长解析 / 格式化(纯函数,不碰 pmset、sudo、launchd)
+# espresso CLI 的轻量测试:时长解析 / 格式化 / 供电解析(纯函数,不碰 pmset、sudo、launchd)
 # 运行: ./tests/test_espresso.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -29,6 +29,10 @@ done
 for case in 1:1m 45:45m 60:1h 90:1h\ 30m 720:12h; do
     check "fmt ${case%%:*}" "${case#*:}" "$(fmt_minutes "${case%%:*}")"
 done
+
+check "power AC" AC "$(printf "Now drawing from 'AC Power'\n -InternalBattery-0\n" | parse_power_source)"
+check "power battery" Battery "$(printf "Now drawing from 'Battery Power'\n -InternalBattery-0\n" | parse_power_source)"
+check "power unknown" Unknown "$(printf "" | parse_power_source)"
 
 # 跨天的时间带星期
 check "clock today" "$(date +%H:%M)" "$(fmt_clock "$(date +%s)")"

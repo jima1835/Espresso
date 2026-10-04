@@ -218,7 +218,7 @@ do_status() {
 # 被 source 时(如测试)只加载函数,不执行命令
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
 
-# 改状态的命令串行执行,避免与 LaunchAgent 的 tick 交错
+# 改状态的命令串行执行,避免与 LaunchAgent 的 tick 交错(`lockf <fd>` 写法需要 macOS 15+)
 case "${1:-}" in
     on|off|toggle|for|_tick)
         mkdir -p "$STATE_DIR"

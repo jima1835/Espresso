@@ -14,7 +14,7 @@ UI 参考 Warp (1.1.1.1):菜单栏一个咖啡杯,点开一个大圆钮——橙
 
 ### 安装
 
-要求:macOS 13+(Apple Silicon / Intel),装有 Xcode Command Line Tools(没有则 `xcode-select --install`)。
+要求:**macOS 15 (Sequoia) 及以上**(Apple Silicon / Intel),装有 Xcode Command Line Tools(没有则 `xcode-select --install`)。**不支持 macOS 14 及更早版本**:系统自带的 `lockf` 太旧,开关命令会直接报错。
 
 ```bash
 git clone https://github.com/mrn3088/Espresso.git
@@ -102,7 +102,7 @@ The UI is inspired by Warp (1.1.1.1): a coffee cup in the menu bar opens a panel
 
 ### Install
 
-Requires macOS 13+ (Apple Silicon or Intel) and Xcode Command Line Tools (`xcode-select --install` if missing).
+Requires **macOS 15 (Sequoia) or later** (Apple Silicon or Intel) and Xcode Command Line Tools (`xcode-select --install` if missing). **macOS 14 and earlier are not supported**: their built-in `lockf` is too old, so the on/off commands fail.
 
 ```bash
 git clone https://github.com/mrn3088/Espresso.git

@@ -12,7 +12,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 swiftc -O -parse-as-library \
-    -target "$(uname -m)-apple-macosx13.0" \
+    -target "$(uname -m)-apple-macosx15.0" \
     -o "$APP/Contents/MacOS/Espresso" \
     "$SRC_DIR/EspressoApp.swift"
 

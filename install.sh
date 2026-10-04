@@ -8,7 +8,11 @@ cd "$(dirname "$0")"
 SUDOERS=/etc/sudoers.d/pmset-espresso
 CLI_DEST=/usr/local/bin/espresso
 
-# 1. 编译环境
+# 1. 系统版本与编译环境
+if [ "$(sw_vers -productVersion | cut -d. -f1)" -lt 15 ]; then
+    echo "需要 macOS 15 (Sequoia) 及以上,当前是 $(sw_vers -productVersion)"
+    exit 1
+fi
 if ! command -v swiftc >/dev/null; then
     echo "需要先安装 Xcode Command Line Tools,请运行: xcode-select --install"
     exit 1

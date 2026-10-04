@@ -1,10 +1,12 @@
 #!/bin/bash
-# NoSleep 一键安装:编译 -> 装到 ~/Applications -> 配置 sudoers 免密 -> 启动
+# Espresso 一键安装:编译 -> 装 app -> sudoers 免密规则 + CLI(合并为一次密码框)-> 启动
+# UI(菜单栏 app)与 CLI(espresso 命令)都会安装,共用同一条免密规则。
 # 幂等,重复运行安全。
 set -euo pipefail
 cd "$(dirname "$0")"
 
-SUDOERS=/etc/sudoers.d/pmset-nosleep
+SUDOERS=/etc/sudoers.d/pmset-espresso
+CLI_DEST=/usr/local/bin/espresso
 
 # 1. 编译环境
 if ! command -v swiftc >/dev/null; then
@@ -12,23 +14,39 @@ if ! command -v swiftc >/dev/null; then
     exit 1
 fi
 
-# 2. 编译 + 打包 + 签名
+# 2. 编译 + 打包 + 签名 app
 ./build.sh
 
-# 3. sudoers 免密规则(只放行两条 pmset 命令;仅此一步需要输一次密码)
+# 3. 收集需要管理员权限的动作,合并进一次系统密码框
+ADMIN=()
+TMP=""
 if [ -f "$SUDOERS" ]; then
-    echo "sudoers 规则已存在,跳过(如需重建请先运行 uninstall.sh)"
+    echo "sudoers 免密规则已存在,跳过"
 else
-    TMP="$(mktemp -t pmset-nosleep)"
+    TMP="$(mktemp -t pmset-espresso)"
     printf '%s ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0\n' \
         "$USER" > "$TMP"
     visudo -cf "$TMP" >/dev/null   # 语法校验不过就中止,绝不装坏 sudoers
-    osascript -e "do shell script \"/usr/bin/install -o root -g wheel -m 0440 $TMP $SUDOERS\" with prompt \"NoSleep:授权一次,以后开关防休眠不再要密码\" with administrator privileges"
-    rm -f "$TMP"
-    echo "免密规则已写入 $SUDOERS"
+    ADMIN+=("/usr/bin/install -o root -g wheel -m 0440 $TMP $SUDOERS")
+fi
+if cmp -s espresso "$CLI_DEST" 2>/dev/null; then
+    echo "CLI 已是最新,跳过"
+else
+    ADMIN+=("/usr/bin/install -o root -g wheel -m 0755 $PWD/espresso $CLI_DEST")
 fi
 
-# 4. 启动
-open "$HOME/Applications/NoSleep.app"
+if [ ${#ADMIN[@]} -gt 0 ]; then
+    CMD=""
+    for c in "${ADMIN[@]}"; do
+        CMD="${CMD:+$CMD && }$c"
+    done
+    osascript -e "do shell script \"$CMD\" with prompt \"Espresso:授权一次,以后开关防休眠不再要密码\" with administrator privileges"
+    [ -z "$TMP" ] || rm -f "$TMP"
+fi
+
+# 4. 启动 app
+open "$HOME/Applications/Espresso.app"
 echo
-echo "安装完成:菜单栏找咖啡杯图标,点大圆钮即可开关防休眠。"
+echo "安装完成:"
+echo "  UI  - 菜单栏找咖啡杯图标,点大圆钮开关"
+echo "  CLI - espresso on / off / toggle / status"

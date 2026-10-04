@@ -1,21 +1,24 @@
 #!/bin/bash
-# NoSleep 卸载:停 app -> 删 app -> 删 sudoers 免密规则
-# 注意:如果当前处于防休眠状态(SleepDisabled=1),请先恢复正常睡眠再卸载。
+# Espresso 卸载:停 app -> 删 app -> 删 CLI 和 sudoers 免密规则
+# 注意:如果当前处于防休眠状态(SleepDisabled=1),会先帮你恢复正常睡眠。
 set -euo pipefail
 
-SUDOERS=/etc/sudoers.d/pmset-nosleep
+SUDOERS=/etc/sudoers.d/pmset-espresso
+CLI_DEST=/usr/local/bin/espresso
 
-if pmset -g | grep -qE 'SleepDisabled\s+1'; then
-    echo "警告:当前是防休眠状态,先帮你恢复正常睡眠 (sudo pmset -a disablesleep 0)"
+if /usr/bin/pmset -g | grep -qE 'SleepDisabled[[:space:]]+1'; then
+    echo "当前处于防休眠状态,先恢复正常睡眠 (sudo pmset -a disablesleep 0)"
     sudo /usr/bin/pmset -a disablesleep 0
 fi
 
-pkill -x NoSleep 2>/dev/null || true
-rm -rf "$HOME/Applications/NoSleep.app"
+pkill -x Espresso 2>/dev/null || true
+rm -rf "$HOME/Applications/Espresso.app"
 
-if [ -f "$SUDOERS" ]; then
-    osascript -e "do shell script \"/bin/rm $SUDOERS\" with prompt \"NoSleep 卸载:删除 sudoers 免密规则\" with administrator privileges"
-    echo "已删除 $SUDOERS"
+ADMIN=""
+[ ! -f "$CLI_DEST" ] || ADMIN="/bin/rm $CLI_DEST"
+[ ! -f "$SUDOERS" ] || ADMIN="${ADMIN:+$ADMIN && }/bin/rm $SUDOERS"
+if [ -n "$ADMIN" ]; then
+    osascript -e "do shell script \"$ADMIN\" with prompt \"Espresso 卸载:删除 CLI 与 sudoers 免密规则\" with administrator privileges"
 fi
 
 echo "卸载完成。"

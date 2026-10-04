@@ -1,0 +1,63 @@
+#!/bin/bash
+# espresso — 命令行版防休眠开关
+# 与 Espresso 菜单栏 app 共用同一条 sudoers 免密规则,状态天然同步。
+set -euo pipefail
+
+PMSET=/usr/bin/pmset
+SUDOERS=/etc/sudoers.d/pmset-espresso
+
+is_on() { $PMSET -g | grep -qE 'SleepDisabled[[:space:]]+1'; }
+
+require_rule() {
+    if [ ! -f "$SUDOERS" ]; then
+        echo "错误:免密规则未安装($SUDOERS 不存在)。请先运行 Espresso 项目的 install.sh" >&2
+        exit 2
+    fi
+}
+
+usage() {
+    cat <<'EOF'
+用法: espresso <命令>
+
+  on       开启防休眠(合盖也不睡)
+  off      恢复正常睡眠
+  toggle   切换开关
+  status   查看状态;开启时退出码 0,关闭时退出码 1(方便脚本判断)
+EOF
+}
+
+case "${1:-}" in
+    on)
+        require_rule
+        sudo -n $PMSET -a disablesleep 1
+        echo "防休眠已开启 SleepDisabled=1(合盖也不睡)"
+        ;;
+    off)
+        require_rule
+        sudo -n $PMSET -a disablesleep 0
+        echo "已恢复正常睡眠 SleepDisabled=0"
+        ;;
+    toggle)
+        if is_on; then exec "$0" off; else exec "$0" on; fi
+        ;;
+    status)
+        if is_on; then
+            echo "on  (SleepDisabled=1,防休眠中)"
+        else
+            echo "off (SleepDisabled=0,正常睡眠)"
+            exit 1
+        fi
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    "")
+        usage >&2
+        exit 64
+        ;;
+    *)
+        echo "未知命令: $1" >&2
+        usage >&2
+        exit 64
+        ;;
+esac

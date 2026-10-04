@@ -70,7 +70,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            Text("NoSleep")
+            Text("Espresso")
                 .font(.headline)
                 .foregroundColor(.secondary)
 
@@ -126,7 +126,7 @@ struct ContentView: View {
 // MARK: - App 入口:菜单栏常驻
 
 @main
-struct NoSleepApp: App {
+struct EspressoApp: App {
     @StateObject private var model = SleepModel()
 
     var body: some Scene {

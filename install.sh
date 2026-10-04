@@ -32,6 +32,8 @@ fi
 if cmp -s espresso "$CLI_DEST" 2>/dev/null; then
     echo "CLI 已是最新,跳过"
 else
+    # Apple Silicon 上 /usr/local/bin 可能不存在(Homebrew 在 /opt/homebrew),先建好
+    ADMIN+=("/bin/mkdir -p /usr/local/bin")
     ADMIN+=("/usr/bin/install -o root -g wheel -m 0755 $PWD/espresso $CLI_DEST")
 fi
 
@@ -49,4 +51,4 @@ open "$HOME/Applications/Espresso.app"
 echo
 echo "安装完成:"
 echo "  UI  - 菜单栏找咖啡杯图标,点大圆钮开关"
-echo "  CLI - espresso on / off / toggle / status"
+echo "  CLI - espresso on / off / toggle / status / for 2h"

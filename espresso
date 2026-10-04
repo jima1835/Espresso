@@ -7,6 +7,15 @@ set -euo pipefail
 PMSET=/usr/bin/pmset
 SUDOERS=/etc/sudoers.d/pmset-espresso
 
+# 定时模式:截止时间(epoch 秒)存在 STATE_DIR,到点由一个用户级 LaunchAgent 关掉防休眠。
+# LaunchAgent 每 30 秒调用一次 `espresso _tick`,与 app / 终端是否开着无关。
+STATE_DIR="$HOME/Library/Application Support/Espresso"
+DEADLINE_FILE="$STATE_DIR/timer-deadline"
+LOCK_FILE="$STATE_DIR/lock"
+AGENT_LABEL=com.mrn3088.espresso.timer
+AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
+MAX_MINUTES=10080   # 定时上限 7 天
+
 # 读取 app 的语言偏好;没装过 app / 没切换过则为英文
 PREF="$(defaults read com.mrn3088.espresso uiLang 2>/dev/null || true)"
 [ "$PREF" = "zh" ] || PREF="en"
@@ -24,53 +33,222 @@ require_rule() {
     fi
 }
 
+# parse_duration <90m|2h|1h30m> -> 打印分钟数;非法 / 为 0 / 超上限返回 1
+parse_duration() {
+    local s="${1:-}" h=0 m=0
+    [[ "$s" =~ ^([0-9]{1,5}h)?([0-9]{1,5}m)?$ ]] && [ -n "$s" ] || return 1
+    [ -z "${BASH_REMATCH[1]}" ] || h=$((10#${BASH_REMATCH[1]%h}))
+    [ -z "${BASH_REMATCH[2]}" ] || m=$((10#${BASH_REMATCH[2]%m}))
+    m=$((h * 60 + m))
+    [ "$m" -ge 1 ] && [ "$m" -le "$MAX_MINUTES" ] || return 1
+    printf '%s\n' "$m"
+}
+
+# fmt_minutes <分钟> -> "1h 30m" / "45m" / "2h"
+fmt_minutes() {
+    local h=$(($1 / 60)) m=$(($1 % 60))
+    if [ "$h" -gt 0 ] && [ "$m" -gt 0 ]; then printf '%dh %dm\n' "$h" "$m"
+    elif [ "$h" -gt 0 ]; then printf '%dh\n' "$h"
+    else printf '%dm\n' "$m"; fi
+}
+
+# fmt_clock <epoch> -> 当天只显示 "14:05",跨天带星期 "Sat 02:05"
+fmt_clock() {
+    if [ "$(date -r "$1" +%Y%m%d)" = "$(date +%Y%m%d)" ]; then date -r "$1" +%H:%M
+    else date -r "$1" '+%a %H:%M'; fi
+}
+
+# 读截止时间;没有 / 内容非法则返回 1
+read_deadline() {
+    local d
+    d="$(cat "$DEADLINE_FILE" 2>/dev/null)" || return 1
+    [[ "$d" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$d"
+}
+
+# 取消定时:删状态 + 删并卸载 LaunchAgent(若是 agent 自己调用,bootout 会结束自身,所以放最后)
+clear_timer() {
+    rm -f "$DEADLINE_FILE" "$AGENT_PLIST"
+    launchctl bootout "gui/$(id -u)/$AGENT_LABEL" 2>/dev/null || true
+}
+
+# 安装并加载定时 LaunchAgent(内容固定,重复调用幂等)
+ensure_agent() {
+    local self uid tmp i
+    # 用当前脚本自身的绝对路径(如 app 内置的那份);若与 /usr/local/bin 下 root 所有的 CLI 相同则优先用后者
+    self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    if cmp -s "$self" /usr/local/bin/espresso; then self=/usr/local/bin/espresso; fi
+    uid="$(id -u)"
+    mkdir -p "$(dirname "$AGENT_PLIST")"
+    tmp="$(mktemp "$STATE_DIR/agent.XXXXXX")"
+    plutil -create xml1 "$tmp"
+    plutil -insert Label -string "$AGENT_LABEL" "$tmp"
+    plutil -insert ProgramArguments -array "$tmp"
+    plutil -insert ProgramArguments -string "$self" -append "$tmp"
+    plutil -insert ProgramArguments -string _tick -append "$tmp"
+    plutil -insert RunAtLoad -bool true "$tmp"
+    plutil -insert StartInterval -integer 30 "$tmp"
+    if cmp -s "$tmp" "$AGENT_PLIST" && launchctl print "gui/$uid/$AGENT_LABEL" >/dev/null 2>&1; then
+        rm -f "$tmp"; return 0   # 已经在跑,新的截止时间下次 tick 自然生效
+    fi
+    launchctl bootout "gui/$uid/$AGENT_LABEL" 2>/dev/null || true
+    mv -f "$tmp" "$AGENT_PLIST"
+    # 刚 bootout 后立即 bootstrap 偶尔会报 I/O error,短暂重试
+    for i in 1 2 3 4 5; do
+        launchctl bootstrap "gui/$uid" "$AGENT_PLIST" 2>/dev/null && return 0
+        sleep 0.5
+    done
+    return 1
+}
+
 usage() {
     if [ "$PREF" = "zh" ]; then
         cat <<'EOF'
 用法: espresso <命令>
 
-  on       开启防休眠(合盖也不睡)
-  off      恢复正常睡眠
-  toggle   切换开关
-  status   查看状态;开启时退出码 0,关闭时退出码 1(方便脚本判断)
+  on         开启防休眠(合盖也不睡),直到手动关闭
+  for <时长> 定时防休眠,到点自动恢复睡眠;如 for 90m / for 2h / for 1h30m(最长 7 天)
+  off        恢复正常睡眠(同时取消定时)
+  toggle     切换开关
+  status     查看状态、剩余时间;开启时退出码 0,关闭时退出码 1(方便脚本判断)
 EOF
     else
         cat <<'EOF'
 Usage: espresso <command>
 
-  on       keep the Mac awake (even lid-closed)
-  off      restore normal sleep
-  toggle   flip the switch
-  status   show state; exit code 0 = on, 1 = off (script-friendly)
+  on             keep the Mac awake (even lid-closed) until turned off
+  for <dur>      keep awake for a while, then restore sleep automatically;
+                 e.g. for 90m / for 2h / for 1h30m (max 7 days)
+  off            restore normal sleep (cancels any timer)
+  toggle         flip the switch
+  status         show state and time left;
+                 exit code 0 = on, 1 = off (script-friendly)
 EOF
     fi
 }
 
+do_on() {
+    require_rule
+    sudo -n $PMSET -a disablesleep 1
+    if read_deadline >/dev/null || [ -f "$AGENT_PLIST" ]; then
+        clear_timer
+        msg "Timed session cancelled — staying awake until turned off" \
+            "已取消定时,改为一直保持唤醒直到手动关闭"
+    fi
+    msg "No-sleep ON (SleepDisabled=1) — stays awake even lid-closed" \
+        "防休眠已开启 SleepDisabled=1(合盖也不睡)"
+}
+
+do_off() {
+    require_rule
+    sudo -n $PMSET -a disablesleep 0
+    clear_timer
+    msg "Normal sleep restored (SleepDisabled=0)" \
+        "已恢复正常睡眠 SleepDisabled=0"
+}
+
+do_for() {
+    local mins deadline
+    if ! mins="$(parse_duration "${1:-}")"; then
+        msg "Invalid duration: '${1:-}'. Use minutes or hours, e.g. 90m, 2h, 1h30m (1m to 7 days)." \
+            "无效时长:'${1:-}'。请用分钟或小时,如 90m、2h、1h30m(1 分钟到 7 天)" >&2
+        exit 64
+    fi
+    if [ "$(id -u)" = 0 ]; then
+        msg "Error: don't run 'espresso for' with sudo; the timer belongs to your user session." \
+            "错误:不要用 sudo 运行 espresso for,定时器属于当前用户会话" >&2
+        exit 2
+    fi
+    require_rule
+    deadline=$(( $(date +%s) + mins * 60 ))
+    # 先装好自动关闭,再开防休眠:任何一步失败都不会留下一个"关不掉"的定时会话
+    printf '%s\n' "$deadline" > "$DEADLINE_FILE.tmp"
+    mv -f "$DEADLINE_FILE.tmp" "$DEADLINE_FILE"
+    if ! ensure_agent; then
+        clear_timer
+        msg "Error: could not load the auto-off LaunchAgent ($AGENT_PLIST); no-sleep not changed." \
+            "错误:无法加载自动关闭的 LaunchAgent($AGENT_PLIST),未改变防休眠状态" >&2
+        exit 1
+    fi
+    if ! sudo -n $PMSET -a disablesleep 1; then
+        # 原本就开着(比如上一个定时)则保留新定时,保证仍会自动关闭;否则清掉
+        is_on || clear_timer
+        exit 1
+    fi
+    msg "No-sleep ON for $(fmt_minutes "$mins") — normal sleep returns at $(fmt_clock "$deadline")" \
+        "防休眠已开启 $(fmt_minutes "$mins"),将于 $(fmt_clock "$deadline") 自动恢复正常睡眠"
+}
+
+# LaunchAgent 定时调用:到点关防休眠;计时已取消 / 已被别处关掉则清理自身
+do_tick() {
+    local deadline
+    if ! deadline="$(read_deadline)"; then clear_timer; return 0; fi
+    if ! is_on; then clear_timer; return 0; fi
+    [ "$(date +%s)" -ge "$deadline" ] || return 0
+    # pmset 失败(比如免密规则被删)就保留 agent,下次 tick 再试
+    sudo -n $PMSET -a disablesleep 0 || return 1
+    clear_timer
+}
+
+do_status() {
+    local deadline now left
+    if is_on; then
+        msg "on  (SleepDisabled=1, no-sleep active)" \
+            "on  (SleepDisabled=1,防休眠中)"
+        if deadline="$(read_deadline)"; then
+            now="$(date +%s)"
+            if [ "$deadline" -gt "$now" ]; then
+                left=$(( (deadline - now + 59) / 60 ))
+                msg "timer: $(fmt_minutes "$left") left — normal sleep returns at $(fmt_clock "$deadline")" \
+                    "定时:剩余 $(fmt_minutes "$left"),$(fmt_clock "$deadline") 自动恢复正常睡眠"
+            else
+                msg "timer: expired — normal sleep will be restored within 30s" \
+                    "定时:已到点,30 秒内自动恢复正常睡眠"
+            fi
+        else
+            msg "timer: none (until turned off)" "定时:无(直到手动关闭)"
+        fi
+    else
+        msg "off (SleepDisabled=0, normal sleep)" \
+            "off (SleepDisabled=0,正常睡眠)"
+        return 1
+    fi
+}
+
+# 被 source 时(如测试)只加载函数,不执行命令
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
+
+# 改状态的命令串行执行,避免与 LaunchAgent 的 tick 交错
+case "${1:-}" in
+    on|off|toggle|for|_tick)
+        mkdir -p "$STATE_DIR"
+        exec 9>>"$LOCK_FILE"
+        /usr/bin/lockf -s -t 30 9 || {
+            msg "Error: another espresso command is still running" "错误:另一个 espresso 命令仍在运行" >&2
+            exit 75
+        }
+        ;;
+esac
+
 case "${1:-}" in
     on)
-        require_rule
-        sudo -n $PMSET -a disablesleep 1
-        msg "No-sleep ON (SleepDisabled=1) — stays awake even lid-closed" \
-            "防休眠已开启 SleepDisabled=1(合盖也不睡)"
+        do_on
         ;;
     off)
-        require_rule
-        sudo -n $PMSET -a disablesleep 0
-        msg "Normal sleep restored (SleepDisabled=0)" \
-            "已恢复正常睡眠 SleepDisabled=0"
+        do_off
+        ;;
+    for)
+        if [ $# -ne 2 ]; then usage >&2; exit 64; fi
+        do_for "$2"
         ;;
     toggle)
-        if is_on; then exec "$0" off; else exec "$0" on; fi
+        if is_on; then do_off; else do_on; fi
         ;;
     status)
-        if is_on; then
-            msg "on  (SleepDisabled=1, no-sleep active)" \
-                "on  (SleepDisabled=1,防休眠中)"
-        else
-            msg "off (SleepDisabled=0, normal sleep)" \
-                "off (SleepDisabled=0,正常睡眠)"
-            exit 1
-        fi
+        do_status
+        ;;
+    _tick)
+        do_tick
         ;;
     -h|--help|help)
         usage

@@ -18,6 +18,8 @@ swiftc -O -parse-as-library \
 
 cp "$SRC_DIR/Info.plist" "$APP/Contents/Info.plist"
 cp "$SRC_DIR/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+# 内置一份 CLI:app 的开关 / 定时都通过它执行,与命令行行为完全一致
+install -m 0755 "$SRC_DIR/espresso" "$APP/Contents/Resources/espresso"
 
 # ad-hoc 签名(本机自用足够)
 codesign --force --sign - "$APP" >/dev/null

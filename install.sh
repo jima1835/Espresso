@@ -8,7 +8,11 @@ cd "$(dirname "$0")"
 SUDOERS=/etc/sudoers.d/pmset-espresso
 CLI_DEST=/usr/local/bin/espresso
 
-# 1. 编译环境
+# 1. 系统版本与编译环境
+if [ "$(sw_vers -productVersion | cut -d. -f1)" -lt 15 ]; then
+    echo "需要 macOS 15 (Sequoia) 及以上,当前是 $(sw_vers -productVersion)"
+    exit 1
+fi
 if ! command -v swiftc >/dev/null; then
     echo "需要先安装 Xcode Command Line Tools,请运行: xcode-select --install"
     exit 1
@@ -32,6 +36,8 @@ fi
 if cmp -s espresso "$CLI_DEST" 2>/dev/null; then
     echo "CLI 已是最新,跳过"
 else
+    # Apple Silicon 上 /usr/local/bin 可能不存在(Homebrew 在 /opt/homebrew),先建好
+    ADMIN+=("/bin/mkdir -p /usr/local/bin")
     ADMIN+=("/usr/bin/install -o root -g wheel -m 0755 $PWD/espresso $CLI_DEST")
 fi
 
@@ -49,4 +55,4 @@ open "$HOME/Applications/Espresso.app"
 echo
 echo "安装完成:"
 echo "  UI  - 菜单栏找咖啡杯图标,点大圆钮开关"
-echo "  CLI - espresso on / off / toggle / status"
+echo "  CLI - espresso on / off / toggle / status / for 2h"
